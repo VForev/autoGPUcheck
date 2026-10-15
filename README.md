@@ -67,6 +67,23 @@ caffeinate -i .venv/bin/python monitor.py      # caffeinate keeps the Mac awake
 
 The first run records current prices as a baseline and only alerts on listings already under your target. State is kept in `state.json`; delete it to start fresh.
 
+## Telegram commands
+
+Send these to your bot while the watcher is running. Type `/` in the chat to get a menu. Only your `TELEGRAM_CHAT_ID` is obeyed; messages from anyone else are ignored.
+
+| Command | What it does |
+|---|---|
+| `/status` | Target price, intervals, paused or not, last successful check, any blocks |
+| `/list` | Current 5090 prices and stock (`/list amazon` for one store) |
+| `/price 3500` | Change the target price |
+| `/interval amazon 120` | Change how often a store is checked (minimum 5s Best Buy, 30s Amazon) |
+| `/pause` / `/pause amazon` | Pause everything or one store |
+| `/resume` / `/resume amazon` | Resume |
+| `/check` | Check now instead of waiting for the next interval |
+| `/reset` | Drop Telegram changes and go back to `.env` |
+
+Changes made this way are saved in `settings.json` (in the Docker `state` volume), so they survive restarts. They take priority over `.env` until you send `/reset`. Commands sent while the watcher is off are ignored when it starts.
+
 ## Notes
 
 - **Intervals:** `BESTBUY_INTERVAL=15` and `AMAZON_INTERVAL=90` are safe for running all day. Going lower makes blocks more likely, especially on Amazon.

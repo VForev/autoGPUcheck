@@ -8,8 +8,10 @@ import time
 from typing import Callable, List, Optional
 
 import config
+from bot import Bot
 from models import Blocked, Listing
 from notifier import Telegram
+from settings import Settings
 from sources import amazon, bestbuy
 from state import State
 
@@ -25,32 +27,41 @@ def fmt_price(price: Optional[float]) -> str:
 
 
 class Watcher(threading.Thread):
-    def __init__(self, name: str, fetch: Callable[[], List[Listing]], interval: float, jitter: float,
-                 state: State, tg: Telegram, target: float):
+    def __init__(self, name: str, fetch: Callable[[], List[Listing]], jitter: float,
+                 state: State, tg: Telegram, settings: Settings):
         super().__init__(name=name, daemon=True)
         self.fetch = fetch
-        self.interval = interval
         self.jitter = jitter  # fraction of interval, e.g. 0.33 -> ±33%
         self.state = state
         self.tg = tg
-        self.target = target
+        self.settings = settings
         self.failures = 0
-        self.backoff = interval
+        self.backoff = settings.interval(name)
         self.first_cycle = True
+        self.wake = threading.Event()  # set by Telegram commands to check right away
+        self.last_listings: List[Listing] = []
+        self.last_ok: Optional[float] = None
 
     def run(self) -> None:
         while True:
-            delay = self.interval
+            if self.settings.paused(self.name):
+                self.wake.wait(60)
+                self.wake.clear()
+                continue
+            interval = self.settings.interval(self.name)
+            delay = interval
             try:
                 listings = self.fetch()
                 self.check(listings)
+                self.last_listings = listings
+                self.last_ok = time.time()
                 log.info("%s: %d listings, %d in stock", self.name, len(listings),
                          sum(l.in_stock for l in listings))
                 if self.failures >= FAILURE_ALERT_THRESHOLD:
                     self.tg.send("✅ {} is working again.".format(self.name))
                 self.failures = 0
                 # After a block, ease back to the normal pace instead of jumping straight to it.
-                self.backoff = max(self.interval, self.backoff / 2)
+                self.backoff = max(interval, self.backoff / 2)
                 delay = self.backoff
             except Blocked as e:
                 self.failures += 1
@@ -62,7 +73,8 @@ class Watcher(threading.Thread):
                 self.failures += 1
                 log.warning("%s error: %s", self.name, e)
                 self.on_failure(str(e))
-            time.sleep(max(1.0, delay * random.uniform(1 - self.jitter, 1 + self.jitter)))
+            self.wake.wait(max(1.0, delay * random.uniform(1 - self.jitter, 1 + self.jitter)))
+            self.wake.clear()
 
     def on_failure(self, reason: str) -> None:
         if self.failures == FAILURE_ALERT_THRESHOLD:
@@ -70,15 +82,16 @@ class Watcher(threading.Thread):
                 self.name, self.failures, html.escape(reason)))
 
     def check(self, listings: List[Listing]) -> None:
+        target = self.settings.target_price
         for l in listings:
             prev = self.state.get(l.key)
             prev_price = prev.get("price") if prev else None
             reasons = []
 
-            under = l.in_stock and l.price is not None and l.price <= self.target
+            under = l.in_stock and l.price is not None and l.price <= target
             target_alerted = prev.get("target_alerted") if prev else None
             if under and target_alerted != l.price:
-                reasons.append("🎯 At or below target ({})".format(fmt_price(self.target)))
+                reasons.append("🎯 At or below target ({})".format(fmt_price(target)))
                 target_alerted = l.price
             elif not under:
                 target_alerted = None
@@ -161,10 +174,16 @@ def main() -> None:
         return
 
     state = State()
-    tg.send("👀 RTX 5090 watcher started: {}. Target {}.".format(
-        ", ".join("{} every {:.0f}s".format(n, i) for n, _, i, _ in sources), fmt_price(cfg.target_price)))
-    for name, fetch, interval, jitter in sources:
-        Watcher(name, fetch, interval, jitter, state, tg, cfg.target_price).start()
+    settings = Settings(cfg)
+    watchers = {name: Watcher(name, fetch, jitter, state, tg, settings) for name, fetch, _, jitter in sources}
+    tg.send("👀 RTX 5090 watcher started: {}. Target {}.{}\nSend /help for commands.".format(
+        ", ".join("{} every {:.0f}s".format(n, settings.interval(n)) for n in watchers),
+        fmt_price(settings.target_price),
+        " Paused: {}.".format(", ".join(n for n in watchers if settings.paused(n)))
+        if any(settings.paused(n) for n in watchers) else ""))
+    for w in watchers.values():
+        w.start()
+    Bot(tg, settings, watchers).start()
     try:
         while True:
             time.sleep(3600)

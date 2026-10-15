@@ -3,3 +3,4 @@
 .git/
 state.json
 __pycache__/
+settings.json
