@@ -1,0 +1,13 @@
+[Unit]
+Description=RTX 5090 price watcher (Best Buy + Amazon -> Telegram)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=%h/autoGPUcheck
+ExecStart=%h/autoGPUcheck/.venv/bin/python -u monitor.py
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=default.target
