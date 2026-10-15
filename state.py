@@ -3,7 +3,8 @@ import os
 import threading
 from typing import Dict, Optional
 
-STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state.json")
+# Docker sets STATE_FILE to a path on a mounted volume so state survives container rebuilds.
+STATE_FILE = os.getenv("STATE_FILE") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "state.json")
 
 
 class State:

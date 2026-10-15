@@ -29,7 +29,24 @@ Checks Best Buy (every 15s by default) and Amazon (about every 90s) for RTX 5090
 
 ## Run
 
-**Linux server (runs in the background, restarts on crash and on reboot):**
+**Docker (recommended for a server):** needs Docker with the Compose plugin. Only `.env` is required on the host, so you can skip the venv and pip lines in Setup step 1.
+```sh
+git clone https://github.com/VForev/autoGPUcheck.git ~/autoGPUcheck
+cd ~/autoGPUcheck
+cp .env.example .env && nano .env              # fill in Telegram token, chat ID, target price
+docker compose run --rm autogpucheck python monitor.py --once         # test fetching
+docker compose run --rm autogpucheck python get_chat_id.py            # find your chat ID if needed
+docker compose run --rm autogpucheck python monitor.py --test-alert   # test Telegram
+docker compose up -d --build                    # start in the background
+docker compose logs -f                          # watch the logs
+```
+It restarts on crash and after a reboot (`restart: unless-stopped`). Price history is kept in the `state` Docker volume, so rebuilding doesn't trigger a flood of alerts.
+
+- After editing `.env`: `docker compose up -d` (Compose recreates the container with the new settings)
+- Update to the latest code: `git pull && docker compose up -d --build`
+- Stop: `docker compose down`
+
+**Linux without Docker (systemd user service):**
 ```sh
 mkdir -p ~/.config/systemd/user
 cp autogpucheck.service ~/.config/systemd/user/
